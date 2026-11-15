@@ -25,4 +25,18 @@ npm install
 npm run dev
 ```
 
-The backend API docs are available at <http://localhost:8000/docs>. Configure the frontend API URL using its environment configuration if needed.
+The backend API docs are available at <http://localhost:8000/docs>. The frontend sends PDF benchmark requests through its Next.js API route; Docker Compose connects that route to the backend service.
+
+## Run both apps with Docker
+
+From the repository root, build and start both services:
+
+```bash
+docker compose up --build
+```
+
+- Frontend: <http://localhost:3001>
+- Backend API: <http://localhost:8000>
+- API docs: <http://localhost:8000/docs>
+
+Stop the services with `Ctrl+C`, or run `docker compose down` in another terminal.

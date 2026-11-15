@@ -16,6 +16,8 @@ import { useState, useMemo } from "react"
 import Image from "next/image"
 import toolsData from "@/data/pdf-tools.json"
 
+const BACKEND_SUPPORTED_TOOLS = new Set(["pypdf2", "pdfplumber", "pdfminer"])
+
 interface ToolSelectionModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -54,7 +56,7 @@ export default function ToolSelectionModal({
         <DialogHeader>
           <DialogTitle>Select Tools to Compare</DialogTitle>
           <DialogDescription>
-            Choose up to {maxSelections} tools to compare. Currently selected: {selectedTools.length}
+            Choose up to {maxSelections} tools supported by this backend. Currently selected: {selectedTools.length}
           </DialogDescription>
         </DialogHeader>
 
@@ -74,7 +76,8 @@ export default function ToolSelectionModal({
         <div className="flex-1 overflow-y-auto space-y-3 pr-2">
           {filteredTools.map((tool) => {
             const isSelected = isToolSelected(tool.id)
-            const isDisabled = !isSelected && !canSelectMore
+            const isSupported = BACKEND_SUPPORTED_TOOLS.has(tool.id)
+            const isDisabled = !isSupported || (!isSelected && !canSelectMore)
 
             return (
               <div
@@ -111,6 +114,11 @@ export default function ToolSelectionModal({
                     <Badge variant="secondary" className="mb-2">
                       {tool.category}
                     </Badge>
+                    {!isSupported && (
+                      <Badge variant="outline" className="mb-2 ml-2">
+                        Not available in this backend
+                      </Badge>
+                    )}
                     <p className="text-sm text-muted-foreground line-clamp-2">
                       {tool.description}
                     </p>

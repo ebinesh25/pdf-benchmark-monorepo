@@ -1,27 +1,49 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { Suspense, useState, useEffect } from "react"
 import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Upload, X, FileText, Plus } from "lucide-react"
-import { Progress } from "@/components/ui/progress"
+import { Upload, X, FileText, Plus, Loader2, Play } from "lucide-react"
 import ToolSelectionModal from "@/components/ToolSelectionModal"
 import toolsData from "@/data/pdf-tools.json"
 
-export default function ComparePage() {
+const BACKEND_TOOL_IDS: Record<string, string> = {
+  pypdf2: "pypdf",
+  pdfplumber: "pdfplumber",
+  pdfminer: "pdfminer",
+}
+
+type BenchmarkResult = {
+  tool: string
+  execution_time_ms: number
+  extracted_text_length: number
+  extracted_text: string | null
+  error: string | null
+}
+
+type BenchmarkResponse = {
+  filename: string
+  file_size_bytes: number
+  results: BenchmarkResult[]
+}
+
+function ComparePageContent() {
   const searchParams = useSearchParams()
   const [selectedTools, setSelectedTools] = useState<string[]>([])
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [benchmarkResponse, setBenchmarkResponse] = useState<BenchmarkResponse | null>(null)
+  const [benchmarkError, setBenchmarkError] = useState<string | null>(null)
+  const [isBenchmarking, setIsBenchmarking] = useState(false)
 
   // Initialize selected tools from URL params
   useEffect(() => {
     const toolsParam = searchParams.get('tools')
     if (toolsParam) {
       const toolIds = toolsParam.split(',').filter(id => 
-        toolsData.tools.some(tool => tool.id === id)
+        Boolean(BACKEND_TOOL_IDS[id]) && toolsData.tools.some(tool => tool.id === id)
       ).slice(0, 3)
       setSelectedTools(toolIds)
     }
@@ -31,10 +53,14 @@ export default function ComparePage() {
     const file = e.target.files?.[0]
     if (file && file.type === "application/pdf") {
       setUploadedFile(file)
+      setBenchmarkResponse(null)
+      setBenchmarkError(null)
     }
   }
 
   const handleToolSelect = (toolId: string) => {
+    setBenchmarkResponse(null)
+    setBenchmarkError(null)
     setSelectedTools(prev => {
       if (prev.includes(toolId)) {
         return prev.filter(id => id !== toolId)
@@ -46,7 +72,38 @@ export default function ComparePage() {
   }
 
   const removeToolSlot = (toolId: string) => {
+    setBenchmarkResponse(null)
+    setBenchmarkError(null)
     setSelectedTools(prev => prev.filter(id => id !== toolId))
+  }
+
+  const runBenchmark = async () => {
+    if (!uploadedFile || selectedTools.length === 0) return
+
+    setIsBenchmarking(true)
+    setBenchmarkError(null)
+    setBenchmarkResponse(null)
+
+    const formData = new FormData()
+    formData.append("file", uploadedFile)
+    const query = new URLSearchParams()
+    selectedTools.forEach((toolId) => query.append("tools", BACKEND_TOOL_IDS[toolId]))
+
+    try {
+      const response = await fetch(`/api/benchmark?${query.toString()}`, {
+        method: "POST",
+        body: formData,
+      })
+      const payload = await response.json()
+      if (!response.ok) {
+        throw new Error(payload.detail ?? "The benchmark request failed.")
+      }
+      setBenchmarkResponse(payload as BenchmarkResponse)
+    } catch (error) {
+      setBenchmarkError(error instanceof Error ? error.message : "The benchmark request failed.")
+    } finally {
+      setIsBenchmarking(false)
+    }
   }
 
   const getToolById = (id: string) => {
@@ -107,7 +164,11 @@ export default function ComparePage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => setUploadedFile(null)}
+                    onClick={() => {
+                      setUploadedFile(null)
+                      setBenchmarkResponse(null)
+                      setBenchmarkError(null)
+                    }}
                   >
                     <X className="h-4 w-4" />
                   </Button>
@@ -120,7 +181,7 @@ export default function ComparePage() {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-semibold">Selected Tools</h2>
+                <h2 className="text-2xl font-semibold">Selected extraction tools</h2>
                 <p className="text-sm text-muted-foreground mt-1">
                   {selectedTools.length} of 3 tools selected
                 </p>
@@ -157,27 +218,8 @@ export default function ComparePage() {
                       <CardTitle className="text-lg pr-8">{tool.name}</CardTitle>
                       <Badge variant="secondary" className="w-fit">{tool.category}</Badge>
                     </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Accuracy</span>
-                          <span className="font-medium">{tool.benchmarks.accuracy}%</span>
-                        </div>
-                        <Progress value={tool.benchmarks.accuracy} className="h-2" />
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Speed</span>
-                        <span className="font-medium">{tool.benchmarks.speed}ms</span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Cost</span>
-                        <span className="font-medium">
-                          {tool.benchmarks.costPerPage === 0 
-                            ? "Free" 
-                            : `$${tool.benchmarks.costPerPage}/page`
-                          }
-                        </span>
-                      </div>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground">{tool.description}</p>
                     </CardContent>
                   </Card>
                 ))}
@@ -185,93 +227,68 @@ export default function ComparePage() {
             )}
           </div>
 
-          {/* Comparison Results */}
-          {selectedToolsData.length > 0 && (
-            <div className="space-y-4">
-              <h2 className="text-2xl font-semibold">Benchmark Comparison</h2>
+          <div className="flex flex-col items-center gap-3">
+            <Button
+              size="lg"
+              onClick={runBenchmark}
+              disabled={!uploadedFile || selectedTools.length === 0 || isBenchmarking}
+              className="gap-2"
+            >
+              {isBenchmarking ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              {isBenchmarking ? "Extracting PDF…" : "Run extraction"}
+            </Button>
+            {!uploadedFile && <p className="text-sm text-muted-foreground">Upload a PDF to start extraction.</p>}
+            {uploadedFile && selectedTools.length === 0 && (
+              <p className="text-sm text-muted-foreground">Select at least one supported tool.</p>
+            )}
+            {benchmarkError && (
+              <p role="alert" className="text-sm text-destructive">{benchmarkError}</p>
+            )}
+          </div>
 
-              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {selectedToolsData.map((tool: any) => (
-                  <Card key={tool.id}>
+          {/* Comparison Results */}
+          {benchmarkResponse && (
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-2xl font-semibold">Extraction results</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {benchmarkResponse.filename} · {benchmarkResponse.results.length} tools · actual backend results
+                </p>
+              </div>
+              <div className="grid gap-4 lg:grid-cols-2">
+                {benchmarkResponse.results.map((result) => (
+                  <Card key={result.tool}>
                     <CardHeader>
-                      <CardTitle className="flex items-center justify-between">
-                        <span>{tool.name}</span>
+                      <CardTitle className="flex items-center justify-between gap-3">
+                        <span>{result.tool}</span>
+                        {result.error ? (
+                          <Badge variant="destructive">Failed</Badge>
+                        ) : (
+                          <Badge variant="secondary">{result.execution_time_ms.toFixed(1)} ms</Badge>
+                        )}
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="space-y-3">
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Accuracy</span>
-                            <span className="font-medium">{tool.benchmarks.accuracy}%</span>
-                          </div>
-                          <Progress value={tool.benchmarks.accuracy} className="h-2" />
-                        </div>
-
-                        <div className="flex justify-between text-sm pt-2 border-t">
-                          <span className="text-muted-foreground">Speed</span>
-                          <span className="font-medium">{tool.benchmarks.speed}ms</span>
-                        </div>
-
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Cost</span>
-                          <span className="font-medium">
-                            {tool.benchmarks.costPerPage === 0 
-                              ? "Free" 
-                              : `$${tool.benchmarks.costPerPage}/page`
-                            }
-                          </span>
-                        </div>
-
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">File Size</span>
-                          <span className="font-medium text-xs">{tool.benchmarks.fileSize}</span>
-                        </div>
-                      </div>
-
-                      <div className="pt-4 border-t">
-                        <h4 className="text-sm font-semibold mb-2">Features</h4>
-                        <div className="space-y-1">
-                          {tool.features.slice(0, 3).map((feature: string, idx: number) => (
-                            <p key={idx} className="text-xs text-muted-foreground">• {feature}</p>
-                          ))}
-                        </div>
-                      </div>
+                    <CardContent>
+                      {result.error ? (
+                        <p role="alert" className="text-sm text-destructive">{result.error}</p>
+                      ) : (
+                        <>
+                          <p className="mb-3 text-xs text-muted-foreground">
+                            {result.extracted_text_length.toLocaleString()} characters extracted
+                          </p>
+                          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-4 text-sm font-mono">
+                            {result.extracted_text || "No text was extracted from this PDF."}
+                          </pre>
+                        </>
+                      )}
                     </CardContent>
                   </Card>
                 ))}
               </div>
-
-              {/* Sample Extraction Comparison */}
-              {uploadedFile && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Extraction Preview (Sample Data)</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-                      {selectedToolsData.map((tool: any) => (
-                        <div key={tool.id} className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <h4 className="font-semibold text-sm">{tool.name}</h4>
-                            <Badge variant="outline" className="text-xs">
-                              {tool.benchmarks.accuracy}% accuracy
-                            </Badge>
-                          </div>
-                          <div className="bg-muted p-3 rounded-lg max-h-64 overflow-y-auto">
-                            <pre className="text-xs whitespace-pre-wrap font-mono">
-                              {tool.sampleDocument.extractedText.slice(0, 300)}...
-                            </pre>
-                          </div>
-                          <p className="text-xs text-muted-foreground italic">
-                            {tool.sampleDocument.notes}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
             </div>
           )}
         </div>
@@ -286,5 +303,13 @@ export default function ComparePage() {
         maxSelections={3}
       />
     </div>
+  )
+}
+
+export default function ComparePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-background" />}>
+      <ComparePageContent />
+    </Suspense>
   )
 }
