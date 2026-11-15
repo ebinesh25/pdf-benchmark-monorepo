@@ -1,0 +1,302 @@
+# PDF Extraction Backend
+
+A FastAPI-based PDF extraction backend with support for multiple extraction tools. This API allows users to submit PDF files for synchronous text extraction using various libraries, each with different strengths.
+
+## Features
+
+- **Multiple PDF Extraction Tools**: Choose from 4 different extraction libraries
+  - **PyMuPDF (fitz)**: Fast, comprehensive extraction (text, tables, images, OCR, metadata)
+  - **pdfplumber**: Excellent for table extraction and detailed layout analysis
+  - **pypdf**: Lightweight, simple text extraction
+  - **pdfminer.six**: Deep text analysis with position information
+
+- **Synchronous Processing**: Direct response with extracted text (no task queue required)
+- **Comprehensive Extraction**: Text, tables, images (with OCR), and metadata
+- **RESTful API**: Clean, well-documented endpoints
+- **Auto-generated Documentation**: Interactive API docs with Swagger UI
+
+## Requirements
+
+- Python 3.10+
+- Tesseract OCR (for image text extraction)
+
+## Installation
+
+### 1. Clone the repository
+
+```bash
+git clone <repository-url>
+cd pdf_extraction_backend
+```
+
+### 2. Install Tesseract OCR
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install tesseract-ocr tesseract-ocr-eng
+```
+
+**macOS:**
+```bash
+brew install tesseract
+```
+
+**Windows:**
+Download and install from: https://github.com/UB-Mannheim/tesseract/wiki
+
+### 3. Install Python dependencies
+
+Using uv (recommended):
+```bash
+pip install uv
+uv sync
+```
+
+Or using pip:
+```bash
+pip install -e .
+```
+
+### 4. Configure environment (optional)
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` if needed to customize settings (file size limits, tesseract path, etc.)
+
+## Running the Application
+
+### Option 1: Run Locally (Recommended for Development)
+
+```bash
+uvicorn app.main:app --reload
+```
+
+The API will be available at http://localhost:8000
+
+### Option 2: Using Docker
+
+```bash
+docker-compose up --build
+```
+
+The API will be available at http://localhost:8000
+
+## API Endpoints
+
+### Base URL
+```
+http://localhost:8000
+```
+
+### Interactive Documentation
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
+
+### Available Endpoints
+
+#### 1. Extract PDF using PyMuPDF
+```http
+POST /api/v1/extract/pymupdf
+Content-Type: multipart/form-data
+
+file: <PDF file>
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "tool": "pymupdf",
+  "text": "=== METADATA ===\nTitle: Sample Document\n\n=== PAGE 1 ===\nExtracted text here...",
+  "error": null
+}
+```
+
+#### 2. Extract PDF using pdfplumber
+```http
+POST /api/v1/extract/pdfplumber
+Content-Type: multipart/form-data
+
+file: <PDF file>
+```
+
+#### 3. Extract PDF using pypdf
+```http
+POST /api/v1/extract/pypdf
+Content-Type: multipart/form-data
+
+file: <PDF file>
+```
+
+#### 4. Extract PDF using pdfminer
+```http
+POST /api/v1/extract/pdfminer
+Content-Type: multipart/form-data
+
+file: <PDF file>
+```
+
+All endpoints return the same response format with status, tool, text, and error fields.
+
+## Usage Examples
+
+### Using cURL
+
+```bash
+# Submit PDF for extraction
+curl -X POST "http://localhost:8000/api/v1/extract/pymupdf" \
+  -H "accept: application/json" \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@document.pdf"
+```
+
+### Using Python
+
+```python
+import requests
+
+# Submit PDF and get immediate results
+with open("document.pdf", "rb") as f:
+    response = requests.post(
+        "http://localhost:8000/api/v1/extract/pymupdf",
+        files={"file": f}
+    )
+
+data = response.json()
+
+if data["status"] == "success":
+    print("Extracted text:")
+    print(data["text"])
+else:
+    print(f"Error: {data['error']}")
+```
+
+### Using JavaScript/Fetch
+
+```javascript
+// Submit PDF and get immediate results
+const formData = new FormData();
+formData.append('file', fileInput.files[0]);
+
+const response = await fetch('http://localhost:8000/api/v1/extract/pymupdf', {
+  method: 'POST',
+  body: formData
+});
+
+const data = await response.json();
+
+if (data.status === 'success') {
+  console.log('Extracted text:', data.text);
+} else {
+  console.error('Error:', data.error);
+}
+```
+
+## Configuration
+
+### Environment Variables
+
+See `.env.example` for all available configuration options:
+
+- `MAX_FILE_SIZE`: Maximum upload file size in bytes (default: 10MB)
+- `OCR_LANGUAGE`: Tesseract OCR language (default: eng)
+- `TESSERACT_CMD`: Path to tesseract executable (optional)
+- `UPLOAD_DIR`: Directory for temporary file uploads (default: temp_uploads)
+
+### Supported File Types
+
+- PDF files only (`.pdf`)
+- Maximum file size: 10MB (configurable)
+
+## Project Structure
+
+```
+pdf_extraction_backend/
+├── app/
+│   ├── main.py              # FastAPI application
+│   ├── config.py            # Configuration settings
+│   ├── routes/
+│   │   └── extraction.py    # API endpoints
+│   ├── schemas/
+│   │   └── extraction.py    # Pydantic models
+│   └── utils/
+│       ├── file_handler.py  # File upload utilities
+│       └── pdf_extractors.py # PDF extraction logic
+├── docker-compose.yml       # Docker service
+├── Dockerfile              # Container image
+├── pyproject.toml          # Dependencies
+└── README.md              # This file
+```
+
+## Choosing the Right Tool
+
+- **PyMuPDF**: Best all-around choice for most use cases. Fast and feature-rich.
+- **pdfplumber**: Choose when you need accurate table extraction or detailed layout analysis.
+- **pypdf**: Use for simple text extraction when you want minimal dependencies.
+- **pdfminer.six**: Best for deep text analysis with character-level positioning.
+
+## Development
+
+### Running Tests
+
+```bash
+pytest
+```
+
+### Code Quality
+
+```bash
+# Format code
+black app/
+
+# Lint
+ruff check app/
+```
+
+## Troubleshooting
+
+### Tesseract not found
+If you get "tesseract not found" errors:
+1. Install Tesseract OCR (see Installation section)
+2. Set `TESSERACT_CMD` in `.env` to the full path of tesseract executable
+
+### Permission denied on temp_uploads
+If you get permission errors:
+```bash
+sudo chown -R $USER:$USER temp_uploads/
+# Or delete and recreate:
+rm -rf temp_uploads/
+mkdir temp_uploads
+```
+
+### Large PDF files timing out
+For large files, consider increasing the file size limit in `.env`:
+```
+MAX_FILE_SIZE=52428800  # 50MB
+```
+
+Note: Synchronous processing means the request will wait for extraction to complete. Very large PDFs may take several seconds.
+
+## API Response Format
+
+All extraction endpoints return a consistent response:
+
+```json
+{
+  "status": "success" | "error",
+  "tool": "pymupdf" | "pdfplumber" | "pypdf" | "pdfminer",
+  "text": "extracted text content..." | null,
+  "error": null | "error message"
+}
+```
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions are welcome! Please open an issue or submit a pull request.
