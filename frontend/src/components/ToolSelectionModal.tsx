@@ -10,13 +10,11 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
 import { Search, Check } from "lucide-react"
 import { useState, useMemo } from "react"
 import Image from "next/image"
 import toolsData from "@/data/pdf-tools.json"
-
-const BACKEND_SUPPORTED_TOOLS = new Set(["pypdf2", "pdfplumber", "pdfminer"])
+import { isBackendSupportedTool } from "@/lib/backend-tools"
 
 interface ToolSelectionModalProps {
   open: boolean
@@ -58,6 +56,9 @@ export default function ToolSelectionModal({
           <DialogDescription>
             Choose up to {maxSelections} tools supported by this backend. Currently selected: {selectedTools.length}
           </DialogDescription>
+          <p className="text-xs text-muted-foreground">
+            Accuracy, speed, and cost values are static catalog estimates; their source and test method were not recorded.
+          </p>
         </DialogHeader>
 
         {/* Search Bar */}
@@ -76,20 +77,23 @@ export default function ToolSelectionModal({
         <div className="flex-1 overflow-y-auto space-y-3 pr-2">
           {filteredTools.map((tool) => {
             const isSelected = isToolSelected(tool.id)
-            const isSupported = BACKEND_SUPPORTED_TOOLS.has(tool.id)
+            const isSupported = isBackendSupportedTool(tool.id)
             const isDisabled = !isSupported || (!isSelected && !canSelectMore)
 
             return (
-              <div
+              <button
+                type="button"
                 key={tool.id}
-                className={`p-4 border rounded-lg cursor-pointer transition-all ${
+                disabled={isDisabled}
+                aria-pressed={isSelected}
+                className={`w-full p-4 border rounded-lg text-left transition-all ${
                   isSelected 
                     ? 'bg-primary/10 border-primary' 
                     : isDisabled
                     ? 'opacity-50 cursor-not-allowed'
                     : 'hover:bg-muted'
                 }`}
-                onClick={() => !isDisabled && handleToolClick(tool.id)}
+                onClick={() => handleToolClick(tool.id)}
               >
                 <div className="flex items-start gap-4">
                   <div className="relative h-12 w-12 rounded-lg overflow-hidden bg-muted flex-shrink-0">
@@ -103,12 +107,12 @@ export default function ToolSelectionModal({
                   
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-1">
-                      <h4 className="font-semibold">{tool.name}</h4>
+                      <h3 className="font-semibold">{tool.name}</h3>
                       {isSelected && (
-                        <Button size="sm" variant="default" className="gap-2">
+                        <Badge variant="default" className="gap-2">
                           <Check className="h-3 w-3" />
                           Selected
-                        </Button>
+                        </Badge>
                       )}
                     </div>
                     <Badge variant="secondary" className="mb-2">
@@ -141,7 +145,7 @@ export default function ToolSelectionModal({
                     </div>
                   </div>
                 </div>
-              </div>
+              </button>
             )
           })}
         </div>

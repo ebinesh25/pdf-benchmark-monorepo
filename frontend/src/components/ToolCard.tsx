@@ -24,9 +24,16 @@ interface ToolCardProps {
   isSelected?: boolean
   onSelect?: () => void
   selectionMode?: boolean
+  selectionDisabled?: boolean
 }
 
-export default function ToolCard({ tool, isSelected = false, onSelect, selectionMode = false }: ToolCardProps) {
+export default function ToolCard({
+  tool,
+  isSelected = false,
+  onSelect,
+  selectionMode = false,
+  selectionDisabled = false,
+}: ToolCardProps) {
   const router = useRouter()
 
   const openToolPage = () => {
@@ -59,6 +66,11 @@ export default function ToolCard({ tool, isSelected = false, onSelect, selection
               <Badge variant="secondary" className="mt-1">
                 {tool.category}
               </Badge>
+              {selectionDisabled && selectionMode && (
+                <Badge variant="outline" className="mt-1">
+                  Not in current backend
+                </Badge>
+              )}
             </div>
           </div>
           {selectionMode && (
@@ -66,6 +78,13 @@ export default function ToolCard({ tool, isSelected = false, onSelect, selection
               size="icon"
               variant={isSelected ? "default" : "outline"}
               className="flex-shrink-0"
+              type="button"
+              disabled={selectionDisabled}
+              aria-label={selectionDisabled
+                ? `${tool.name} extraction is unavailable in this backend`
+                : `${isSelected ? "Deselect" : "Select"} ${tool.name}`}
+              aria-pressed={isSelected}
+              title={selectionDisabled ? "Not available in this backend" : undefined}
               onClick={(e) => {
                 e.stopPropagation()
                 selectTool()
@@ -87,7 +106,11 @@ export default function ToolCard({ tool, isSelected = false, onSelect, selection
               <span className="text-muted-foreground">Accuracy</span>
               <span className="font-medium">{tool.benchmarks.accuracy}%</span>
             </div>
-            <Progress value={tool.benchmarks.accuracy} className="h-2" />
+            <Progress
+              value={tool.benchmarks.accuracy}
+              aria-label={`${tool.name} reference accuracy, ${tool.benchmarks.accuracy}%`}
+              className="h-2"
+            />
           </div>
 
           <div className="flex justify-between text-sm pt-2 border-t">

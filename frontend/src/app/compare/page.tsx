@@ -8,12 +8,9 @@ import { Badge } from "@/components/ui/badge"
 import { Upload, X, FileText, Plus, Loader2, Play } from "lucide-react"
 import ToolSelectionModal from "@/components/ToolSelectionModal"
 import toolsData from "@/data/pdf-tools.json"
+import { BACKEND_TOOL_IDS, isBackendSupportedTool } from "@/lib/backend-tools"
 
-const BACKEND_TOOL_IDS: Record<string, string> = {
-  pypdf2: "pypdf",
-  pdfplumber: "pdfplumber",
-  pdfminer: "pdfminer",
-}
+const MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024
 
 type BenchmarkResult = {
   tool: string
@@ -37,30 +34,64 @@ function ComparePageContent() {
   const [benchmarkResponse, setBenchmarkResponse] = useState<BenchmarkResponse | null>(null)
   const [benchmarkError, setBenchmarkError] = useState<string | null>(null)
   const [isBenchmarking, setIsBenchmarking] = useState(false)
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
   // Initialize selected tools from URL params
   useEffect(() => {
     const toolsParam = searchParams.get('tools')
-    if (toolsParam) {
-      const toolIds = toolsParam.split(',').filter(id => 
-        Boolean(BACKEND_TOOL_IDS[id]) && toolsData.tools.some(tool => tool.id === id)
-      ).slice(0, 3)
-      setSelectedTools(toolIds)
+    if (!toolsParam) {
+      setSelectedTools([])
+      setSelectionNotice(null)
+      return
+    }
+
+    const requestedTools = toolsParam.split(",").filter(Boolean)
+    const availableTools = requestedTools.filter(isBackendSupportedTool)
+    const unavailableTools = requestedTools.filter((id) => !isBackendSupportedTool(id))
+    setSelectedTools(availableTools.slice(0, 3))
+
+    if (unavailableTools.length > 0) {
+      const unavailableNames = unavailableTools.map((id) =>
+        toolsData.tools.find((tool) => tool.id === id)?.name ?? id,
+      )
+      setSelectionNotice(
+        `${unavailableNames.join(", ")} ${unavailableNames.length === 1 ? "is" : "are"} not supported by this backend. Choose PyPDF2, pdfplumber, or PDFMiner.six instead.`,
+      )
+    } else {
+      setSelectionNotice(null)
     }
   }, [searchParams])
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file && file.type === "application/pdf") {
-      setUploadedFile(file)
-      setBenchmarkResponse(null)
-      setBenchmarkError(null)
+  const handleSelectedFile = (file: File | null) => {
+    if (!file) return
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setUploadError("Choose a PDF file to continue.")
+      return
     }
+
+    if (file.size > MAX_PDF_SIZE_BYTES) {
+      setUploadError("This PDF is larger than 10 MB. Choose a smaller file.")
+      return
+    }
+
+    setUploadError(null)
+    setUploadedFile(file)
+    setBenchmarkResponse(null)
+    setBenchmarkError(null)
+  }
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleSelectedFile(e.currentTarget.files?.[0] ?? null)
+    e.currentTarget.value = ""
   }
 
   const handleToolSelect = (toolId: string) => {
     setBenchmarkResponse(null)
     setBenchmarkError(null)
+    setSelectionNotice(null)
     setSelectedTools(prev => {
       if (prev.includes(toolId)) {
         return prev.filter(id => id !== toolId)
@@ -74,6 +105,7 @@ function ComparePageContent() {
   const removeToolSlot = (toolId: string) => {
     setBenchmarkResponse(null)
     setBenchmarkError(null)
+    setSelectionNotice(null)
     setSelectedTools(prev => prev.filter(id => id !== toolId))
   }
 
@@ -87,7 +119,9 @@ function ComparePageContent() {
     const formData = new FormData()
     formData.append("file", uploadedFile)
     const query = new URLSearchParams()
-    selectedTools.forEach((toolId) => query.append("tools", BACKEND_TOOL_IDS[toolId]))
+    selectedTools.forEach((toolId) => {
+      if (isBackendSupportedTool(toolId)) query.append("tools", BACKEND_TOOL_IDS[toolId])
+    })
 
     try {
       const response = await fetch(`/api/benchmark?${query.toString()}`, {
@@ -115,7 +149,7 @@ function ComparePageContent() {
     .filter(Boolean)
 
   return (
-    <div className="min-h-screen bg-background">
+    <main id="main-content" className="min-h-screen bg-background">
       <div className="container max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
         <div className="space-y-8">
           {/* Header */}
@@ -135,21 +169,43 @@ function ComparePageContent() {
             </CardHeader>
             <CardContent>
               {!uploadedFile ? (
-                <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-lg cursor-pointer hover:bg-muted/50 transition-colors">
-                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                    <Upload className="w-12 h-12 mb-4 text-muted-foreground" />
-                    <p className="mb-2 text-sm font-medium">
-                      Click to upload or drag and drop
-                    </p>
-                    <p className="text-xs text-muted-foreground">PDF files only (MAX. 10MB)</p>
-                  </div>
-                  <input
-                    type="file"
-                    className="hidden"
-                    accept="application/pdf"
-                    onChange={handleFileUpload}
-                  />
-                </label>
+                <div
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    setIsDragging(true)
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      setIsDragging(false)
+                    }
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    setIsDragging(false)
+                    handleSelectedFile(event.dataTransfer.files[0] ?? null)
+                  }}
+                  className={`rounded-lg ${isDragging ? "bg-primary/5 ring-2 ring-primary" : ""}`}
+                >
+                  <label
+                    htmlFor="pdf-upload"
+                    className="flex h-48 w-full flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/20 cursor-pointer transition-colors hover:bg-muted/50 focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2"
+                  >
+                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                      <Upload className="w-12 h-12 mb-4 text-muted-foreground" aria-hidden="true" />
+                      <p className="mb-2 text-sm font-medium">Choose a PDF or drag it here</p>
+                      <p id="pdf-upload-help" className="text-xs text-muted-foreground">PDF files up to 10 MB</p>
+                    </div>
+                    <input
+                      id="pdf-upload"
+                      type="file"
+                      className="sr-only"
+                      aria-label="Choose a PDF document"
+                      aria-describedby={uploadError ? "pdf-upload-help pdf-upload-error" : "pdf-upload-help"}
+                      accept="application/pdf,.pdf"
+                      onChange={handleFileUpload}
+                    />
+                  </label>
+                </div>
               ) : (
                 <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
                   <div className="flex items-center gap-3">
@@ -164,10 +220,12 @@ function ComparePageContent() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label={`Remove ${uploadedFile.name}`}
                     onClick={() => {
                       setUploadedFile(null)
                       setBenchmarkResponse(null)
                       setBenchmarkError(null)
+                      setUploadError(null)
                     }}
                   >
                     <X className="h-4 w-4" />
@@ -176,6 +234,12 @@ function ComparePageContent() {
               )}
             </CardContent>
           </Card>
+
+          {uploadError && (
+            <p id="pdf-upload-error" role="alert" className="text-sm text-destructive">
+              {uploadError}
+            </p>
+          )}
 
           {/* Tool Selection Section */}
           <div className="space-y-4">
@@ -210,6 +274,7 @@ function ComparePageContent() {
                       variant="ghost"
                       size="icon"
                       className="absolute right-2 top-2 z-10"
+                      aria-label={`Remove ${tool.name}`}
                       onClick={() => removeToolSlot(tool.id)}
                     >
                       <X className="h-4 w-4" />
@@ -226,6 +291,12 @@ function ComparePageContent() {
               </div>
             )}
           </div>
+
+          {selectionNotice && (
+            <p role="status" className="rounded-md border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+              {selectionNotice}
+            </p>
+          )}
 
           <div className="flex flex-col items-center gap-3">
             <Button
@@ -302,13 +373,13 @@ function ComparePageContent() {
         onSelectTool={handleToolSelect}
         maxSelections={3}
       />
-    </div>
+    </main>
   )
 }
 
 export default function ComparePage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-background" />}>
+    <Suspense fallback={<main className="min-h-screen bg-background" aria-busy="true">Loading comparison tools…</main>}>
       <ComparePageContent />
     </Suspense>
   )

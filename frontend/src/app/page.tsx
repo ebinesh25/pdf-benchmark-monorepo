@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Search, ArrowRight } from "lucide-react"
 import ToolCard from "@/components/ToolCard"
 import toolsData from "@/data/pdf-tools.json"
+import { isBackendSupportedTool } from "@/lib/backend-tools"
 
 export default function Home() {
   const router = useRouter()
@@ -37,7 +38,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <main id="main-content" className="min-h-screen bg-background">
       <div className="container max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
         <div className="space-y-8">
           {/* Header Section */}
@@ -46,8 +47,8 @@ export default function Home() {
               PDF Extraction Tools
             </h1>
             <p className="mx-auto max-w-2xl text-lg text-muted-foreground">
-              Compare and explore the best PDF extraction tools. View benchmark stats,
-              sample extractions, and find the perfect tool for your needs.
+              Explore PDF extraction tools, compare their reference figures, and run
+              supported extractors against your own documents.
             </p>
           </div>
 
@@ -64,25 +65,28 @@ export default function Home() {
               />
             </div>
 
-            {selectedTools.length > 0 && (
-              <div className="flex items-center gap-4 justify-between p-4 bg-[#e7e7e7] border rounded-lg fixed bottom-4 md:right-4 z-50
-              backdrop-blur supports-[backdrop-filter]:bg-background/80
-              ">
-                <div>
-                  <p className="font-medium">
-                    {selectedTools.length} tool{selectedTools.length > 1 ? 's' : ''} selected
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {3 - selectedTools.length} more can be selected
-                  </p>
-                </div>
-                <Button onClick={handleCompare} className="gap-2">
-                  Compare Selected
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
+            <p className="text-center text-sm text-muted-foreground" role="note">
+              Accuracy, speed, and price figures are static catalog estimates. Their source and test method were not recorded; use live extraction results when comparing supported tools.
+            </p>
+
           </div>
+
+          {selectedTools.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-lg border bg-muted/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-medium">
+                  {selectedTools.length} tool{selectedTools.length > 1 ? "s" : ""} selected
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {3 - selectedTools.length} more can be selected
+                </p>
+              </div>
+              <Button onClick={handleCompare} className="gap-2">
+                Compare Selected
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
 
           {/* Results Count */}
           <div className="text-center text-sm text-muted-foreground">
@@ -98,6 +102,7 @@ export default function Home() {
                 isSelected={selectedTools.includes(tool.id)}
                 onSelect={() => handleToolSelect(tool.id)}
                 selectionMode={true}
+                selectionDisabled={!isBackendSupportedTool(tool.id)}
               />
             ))}
           </div>
@@ -112,6 +117,6 @@ export default function Home() {
           )}
         </div>
       </div>
-    </div>
+    </main>
   )
 }
