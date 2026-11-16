@@ -7,36 +7,29 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Upload, X, FileText, Plus, Loader2, Play } from "lucide-react"
 import ToolSelectionModal from "@/components/ToolSelectionModal"
-import toolsData from "@/data/pdf-tools.json"
-import { BACKEND_TOOL_IDS, isBackendSupportedTool } from "@/lib/backend-tools"
+import { canonicalParserId, loadParserCatalog, type ParserCatalogEntry } from "@/lib/catalog"
 
 const MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024
 
-type BenchmarkResult = {
-  tool: string
-  execution_time_ms: number
-  extracted_text_length: number
-  extracted_text: string | null
-  error: string | null
-}
-
-type BenchmarkResponse = {
-  filename: string
-  file_size_bytes: number
-  results: BenchmarkResult[]
-}
+type JobReceipt = { job_id: string; status: string; result_url: string }
 
 function ComparePageContent() {
   const searchParams = useSearchParams()
   const [selectedTools, setSelectedTools] = useState<string[]>([])
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
-  const [benchmarkResponse, setBenchmarkResponse] = useState<BenchmarkResponse | null>(null)
+  const [tools, setTools] = useState<ParserCatalogEntry[]>([])
   const [benchmarkError, setBenchmarkError] = useState<string | null>(null)
   const [isBenchmarking, setIsBenchmarking] = useState(false)
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    loadParserCatalog(controller.signal).then(setTools).catch((error) => setBenchmarkError(error instanceof Error ? error.message : "Could not load parser catalog."))
+    return () => controller.abort()
+  }, [])
 
   // Initialize selected tools from URL params
   useEffect(() => {
@@ -48,21 +41,20 @@ function ComparePageContent() {
     }
 
     const requestedTools = toolsParam.split(",").filter(Boolean)
-    const availableTools = requestedTools.filter(isBackendSupportedTool)
-    const unavailableTools = requestedTools.filter((id) => !isBackendSupportedTool(id))
-    setSelectedTools(availableTools.slice(0, 3))
+    const canonicalTools = requestedTools.map(canonicalParserId)
+    const availableTools = canonicalTools.filter((id) => tools.some((tool) => tool.id === id))
+    const unavailableTools = canonicalTools.filter((id) => !tools.some((tool) => tool.id === id))
+    setSelectedTools([...new Set(availableTools)].slice(0, 3))
 
-    if (unavailableTools.length > 0) {
-      const unavailableNames = unavailableTools.map((id) =>
-        toolsData.tools.find((tool) => tool.id === id)?.name ?? id,
-      )
+    if (unavailableTools.length > 0 && tools.length) {
+      const unavailableNames = unavailableTools
       setSelectionNotice(
-        `${unavailableNames.join(", ")} ${unavailableNames.length === 1 ? "is" : "are"} not supported by this backend. Choose PyPDF2, pdfplumber, or PDFMiner.six instead.`,
+        `${unavailableNames.join(", ")} ${unavailableNames.length === 1 ? "is" : "are"} not available in the current parser catalog.`,
       )
     } else {
       setSelectionNotice(null)
     }
-  }, [searchParams])
+  }, [searchParams, tools])
 
   const handleSelectedFile = (file: File | null) => {
     if (!file) return
@@ -79,7 +71,6 @@ function ComparePageContent() {
 
     setUploadError(null)
     setUploadedFile(file)
-    setBenchmarkResponse(null)
     setBenchmarkError(null)
   }
 
@@ -89,7 +80,6 @@ function ComparePageContent() {
   }
 
   const handleToolSelect = (toolId: string) => {
-    setBenchmarkResponse(null)
     setBenchmarkError(null)
     setSelectionNotice(null)
     setSelectedTools(prev => {
@@ -103,7 +93,6 @@ function ComparePageContent() {
   }
 
   const removeToolSlot = (toolId: string) => {
-    setBenchmarkResponse(null)
     setBenchmarkError(null)
     setSelectionNotice(null)
     setSelectedTools(prev => prev.filter(id => id !== toolId))
@@ -114,17 +103,14 @@ function ComparePageContent() {
 
     setIsBenchmarking(true)
     setBenchmarkError(null)
-    setBenchmarkResponse(null)
 
     const formData = new FormData()
     formData.append("file", uploadedFile)
     const query = new URLSearchParams()
-    selectedTools.forEach((toolId) => {
-      if (isBackendSupportedTool(toolId)) query.append("tools", BACKEND_TOOL_IDS[toolId])
-    })
+    selectedTools.forEach((toolId) => query.append("tools", canonicalParserId(toolId)))
 
     try {
-      const response = await fetch(`/api/benchmark?${query.toString()}`, {
+      const response = await fetch(`/api/backend/api/v1/benchmark?${query.toString()}`, {
         method: "POST",
         body: formData,
       })
@@ -132,7 +118,8 @@ function ComparePageContent() {
       if (!response.ok) {
         throw new Error(payload.detail ?? "The benchmark request failed.")
       }
-      setBenchmarkResponse(payload as BenchmarkResponse)
+      const receipt = payload as JobReceipt
+      window.location.assign(receipt.result_url)
     } catch (error) {
       setBenchmarkError(error instanceof Error ? error.message : "The benchmark request failed.")
     } finally {
@@ -141,12 +128,12 @@ function ComparePageContent() {
   }
 
   const getToolById = (id: string) => {
-    return toolsData.tools.find(tool => tool.id === id)
+    return tools.find(tool => tool.id === id)
   }
 
   const selectedToolsData = selectedTools
     .map(id => getToolById(id))
-    .filter(Boolean)
+    .filter((tool): tool is ParserCatalogEntry => Boolean(tool))
 
   return (
     <main id="main-content" className="min-h-screen bg-background">
@@ -223,7 +210,6 @@ function ComparePageContent() {
                     aria-label={`Remove ${uploadedFile.name}`}
                     onClick={() => {
                       setUploadedFile(null)
-                      setBenchmarkResponse(null)
                       setBenchmarkError(null)
                       setUploadError(null)
                     }}
@@ -310,7 +296,7 @@ function ComparePageContent() {
               ) : (
                 <Play className="h-4 w-4" />
               )}
-              {isBenchmarking ? "Extracting PDF…" : "Run extraction"}
+              {isBenchmarking ? "Queueing comparison…" : "Queue comparison"}
             </Button>
             {!uploadedFile && <p className="text-sm text-muted-foreground">Upload a PDF to start extraction.</p>}
             {uploadedFile && selectedTools.length === 0 && (
@@ -321,47 +307,6 @@ function ComparePageContent() {
             )}
           </div>
 
-          {/* Comparison Results */}
-          {benchmarkResponse && (
-            <div className="space-y-4">
-              <div>
-                <h2 className="text-2xl font-semibold">Extraction results</h2>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {benchmarkResponse.filename} · {benchmarkResponse.results.length} tools · actual backend results
-                </p>
-              </div>
-              <div className="grid gap-4 lg:grid-cols-2">
-                {benchmarkResponse.results.map((result) => (
-                  <Card key={result.tool}>
-                    <CardHeader>
-                      <CardTitle className="flex items-center justify-between gap-3">
-                        <span>{result.tool}</span>
-                        {result.error ? (
-                          <Badge variant="destructive">Failed</Badge>
-                        ) : (
-                          <Badge variant="secondary">{result.execution_time_ms.toFixed(1)} ms</Badge>
-                        )}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {result.error ? (
-                        <p role="alert" className="text-sm text-destructive">{result.error}</p>
-                      ) : (
-                        <>
-                          <p className="mb-3 text-xs text-muted-foreground">
-                            {result.extracted_text_length.toLocaleString()} characters extracted
-                          </p>
-                          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-4 text-sm font-mono">
-                            {result.extracted_text || "No text was extracted from this PDF."}
-                          </pre>
-                        </>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -371,6 +316,7 @@ function ComparePageContent() {
         onOpenChange={setModalOpen}
         selectedTools={selectedTools}
         onSelectTool={handleToolSelect}
+        tools={tools}
         maxSelections={3}
       />
     </main>

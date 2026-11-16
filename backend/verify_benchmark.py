@@ -1,53 +1,53 @@
-import requests
-import time
-import subprocess
-import sys
+"""Manual smoke check for the queued extraction API (requires root Compose stack)."""
+
 import os
+import time
+from urllib.parse import urlsplit
+
+import pymupdf as fitz
+import requests
+
 
 def run_verification():
-    # Start the server in the background
-    print("Starting server...")
-    process = subprocess.Popen(
-        ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8001"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE
+    base_url = os.environ.get("PDF_API_URL", "http://localhost:8000").rstrip("/")
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "PDF queue smoke check. Expected reference text.")
+    pdf_bytes = document.tobytes()
+    document.close()
+
+    print(f"Submitting a queued comparison to {base_url}…")
+    response = requests.post(
+        f"{base_url}/api/v1/benchmark",
+        params=[("tools", "pymupdf"), ("tools", "pypdf")],
+        files={"file": ("queue-smoke.pdf", pdf_bytes, "application/pdf")},
+        data={"ground_truth": "PDF queue smoke check. Expected reference text."},
+        timeout=30,
     )
-    
-    # Wait for server to start
-    time.sleep(5)
-    
-    try:
-        # Define the URL
-        url = "http://127.0.0.1:8001/api/v1/benchmark"
-        
-        # Create a dummy PDF file for testing
-        with open("test.pdf", "wb") as f:
-            f.write(b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\n2 0 obj\n<<\n/Type /Pages\n/Kids [3 0 R]\n/Count 1\n>>\nendobj\n3 0 obj\n<<\n/Type /Page\n/Parent 2 0 R\n/Resources <<\n/Font <<\n/F1 4 0 R\n>>\n>>\n/MediaBox [0 0 612 792]\n/Contents 5 0 R\n>>\nendobj\n4 0 obj\n<<\n/Type /Font\n/Subtype /Type1\n/BaseFont /Helvetica\n>>\nendobj\n5 0 obj\n<<\n/Length 44\n>>\nstream\nBT\n/F1 24 Tf\n100 100 Td\n(Hello World) Tj\nET\nendstream\nendobj\nxref\n0 6\n0000000000 65535 f\n0000000010 00000 n\n0000000060 00000 n\n0000000117 00000 n\n0000000236 00000 n\n0000000323 00000 n\ntrailer\n<<\n/Size 6\n/Root 1 0 R\n>>\nstartxref\n417\n%%EOF")
+    if response.status_code != 202:
+        raise RuntimeError(f"Expected 202, got {response.status_code}: {response.text}")
+    receipt = response.json()
+    parts = urlsplit(receipt["result_url"])
+    token = parts.fragment
+    job_url = f"{base_url}/api/v1/jobs/{receipt['job_id']}"
+    headers = {"Authorization": f"Bearer {token}"}
+    print(f"Accepted job {receipt['job_id']} with status {receipt['status']}")
 
-        # Prepare the request
-        files = {'file': ('test.pdf', open('test.pdf', 'rb'), 'application/pdf')}
-        params = [('tools', 'pymupdf'), ('tools', 'pypdf')]
-        data = {'ground_truth': 'Hello World'}
-        
-        print(f"Sending request to {url}...")
-        response = requests.post(url, files=files, params=params, data=data)
-        
-        print(f"Status Code: {response.status_code}")
-        if response.status_code == 200:
-            print("Response JSON:")
-            print(response.json())
-        else:
-            print("Error Response:")
-            print(response.text)
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        status_response = requests.get(job_url, headers=headers, timeout=15)
+        if status_response.status_code != 200:
+            raise RuntimeError(f"Could not retrieve private job: {status_response.status_code} {status_response.text}")
+        job = status_response.json()
+        print(f"{job['status']}: {job['completed_work']}/{job['total_work']} items")
+        if job["status"] not in ("queued", "running"):
+            print(f"Final status: {job['status']}; failures: {job['failed_work']}")
+            for result in job["results"]:
+                print(f"{result['parser_id']} v{result['parser_version']}: {result['status']}, {result['elapsed_ms']} ms")
+            return
+        time.sleep(2)
+    raise TimeoutError("Job did not reach a terminal state within five minutes.")
 
-    except Exception as e:
-        print(f"Verification failed: {e}")
-    finally:
-        # Cleanup
-        print("Stopping server...")
-        process.terminate()
-        if os.path.exists("test.pdf"):
-            os.remove("test.pdf")
 
 if __name__ == "__main__":
     run_verification()

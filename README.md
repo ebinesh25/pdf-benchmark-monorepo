@@ -2,41 +2,24 @@
 
 Monorepo for the PDF extraction benchmark application.
 
-## Projects
+## Run the application
 
-- `backend/` — FastAPI PDF extraction and benchmarking API.
-- `frontend/` — Next.js web application.
-
-## Local development
-
-Start the backend in one terminal:
-
-```bash
-cd backend
-uv sync
-uv run uvicorn app.main:app --reload --port 8000
-```
-
-Start the frontend in another terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-The backend API docs are available at <http://localhost:8000/docs>. The frontend sends PDF benchmark requests through its Next.js API route; Docker Compose connects that route to the backend service.
-
-## Run both apps with Docker
-
-From the repository root, build and start both services:
+Start the entire stack from the repository root:
 
 ```bash
 docker compose up --build
 ```
 
-- Frontend: <http://localhost:3001>
-- Backend API: <http://localhost:8000>
-- API docs: <http://localhost:8000/docs>
+Copy `.env.example` to `.env` to override upload, queue, and retention limits.
 
-Stop the services with `Ctrl+C`, or run `docker compose down` in another terminal.
+- Frontend: <http://localhost:3001>
+- FastAPI and API docs: <http://localhost:8000/docs>
+- MongoDB and Redis: internal to the Compose network
+
+Compose starts a one-time corpus importer, FastAPI, a MongoDB-backed dispatcher, Redis Streams, and a single parser worker. Uploaded PDFs and outputs are stored in MongoDB GridFS. The worker has a one CPU / 1 GiB limit and runs one parser subprocess at a time.
+
+The MongoDB catalog powers parser cards and detail pages. Upload comparisons, single extractions, and published corpus runs return private job links. Public benchmark reports use published corpus revisions only.
+
+Persisted MongoDB and Redis data use named volumes. Stop the stack with `Ctrl+C` or `docker compose down`; `docker compose down -v` removes persisted data.
+
+See [backend/README.md](backend/README.md) for API paths, job access, limits, and manual smoke verification.

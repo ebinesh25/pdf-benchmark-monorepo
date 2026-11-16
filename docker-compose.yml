@@ -1,10 +1,67 @@
+x-backend-environment: &backend-environment
+  MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/pdf_benchmark}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  MAX_FILE_SIZE: ${MAX_FILE_SIZE:-10485760}
+  MAX_PDF_PAGES: ${MAX_PDF_PAGES:-100}
+  MAX_ACTIVE_UPLOAD_JOBS: ${MAX_ACTIVE_UPLOAD_JOBS:-20}
+  MAX_ACTIVE_UPLOAD_JOBS_PER_IP: ${MAX_ACTIVE_UPLOAD_JOBS_PER_IP:-2}
+  MAX_ACTIVE_CORPUS_RUNS: ${MAX_ACTIVE_CORPUS_RUNS:-1}
+  PRIVATE_JOB_RETENTION_HOURS: ${PRIVATE_JOB_RETENTION_HOURS:-24}
+  WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-30}
+  DISPATCHER_HEARTBEAT_SECONDS: ${DISPATCHER_HEARTBEAT_SECONDS:-15}
+  WORK_LEASE_SECONDS: ${WORK_LEASE_SECONDS:-120}
+  WORK_TIMEOUT_SECONDS: ${WORK_TIMEOUT_SECONDS:-90}
+  QUEUE_MAX_BYTES: ${QUEUE_MAX_BYTES:-1073741824}
+
 services:
+  mongodb:
+    image: mongo:8.0
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  corpus-seed:
+    build:
+      context: ./backend
+    command: python -m app.corpus_import
+    environment: *backend-environment
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+
   backend:
     build:
       context: ./backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment: *backend-environment
     ports:
       - "8000:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      corpus-seed:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test:
@@ -17,6 +74,43 @@ services:
       retries: 5
       start_period: 15s
 
+  dispatcher:
+    build:
+      context: ./backend
+    command: python -m app.dispatcher
+    environment: *backend-environment
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      corpus-seed:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+
+  worker:
+    build:
+      context: ./backend
+    command: python -m app.worker
+    environment:
+      <<: *backend-environment
+      WORKER_ID: worker-1
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      corpus-seed:
+        condition: service_completed_successfully
+    cpus: 1.0
+    mem_limit: 1g
+    memswap_limit: 1g
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+
   frontend:
     build:
       context: ./frontend
@@ -27,4 +121,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      dispatcher:
+        condition: service_started
+      worker:
+        condition: service_started
     restart: unless-stopped
+
+volumes:
+  mongodb_data:
+  redis_data:

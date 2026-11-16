@@ -1,20 +1,49 @@
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from gridfs import GridFSBucket
+from pymongo import MongoClient
+from redis import Redis
 
 from app.config import get_settings
-from app.routes import extraction, benchmarking
+from app.database import ensure_indexes, seed_parser_catalog
+from app.registry import validate_parser_catalog
+from app.routes import benchmarking, extraction, jobs
+from app.jobs import service_is_ready
 
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    mongo_client = MongoClient(settings.mongodb_uri, serverSelectionTimeoutMS=5000, tz_aware=True)
+    redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        mongo_client.admin.command("ping")
+        redis_client.ping()
+        db = mongo_client.get_default_database()
+        ensure_indexes(db)
+        seed_parser_catalog(db)
+        validate_parser_catalog(db)
+        app.state.mongo_client = mongo_client
+        app.state.db = db
+        app.state.bucket = GridFSBucket(db, bucket_name="artifacts")
+        app.state.redis_client = redis_client
+        yield
+    finally:
+        mongo_client.close()
+        redis_client.close()
+
+
 app = FastAPI(
     title=settings.app_name,
-    description="PDF extraction backend with multiple extraction tools",
-    version="0.1.0",
+    description="Mongo-backed PDF parser catalog and durable extraction jobs",
+    version="0.2.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
-
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,52 +51,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Include routers
 app.include_router(extraction.router, prefix=settings.api_v1_prefix)
 app.include_router(benchmarking.router, prefix=settings.api_v1_prefix)
-
-MODELS_LIST = [
-    {
-        "name": "pymupdf",
-        "description": "PyMuPDF (fitz) is a PDF library based on the MuPDF open source project.",
-        "tags": ["opensource"],
-    },
-    {
-        "name": "pdfplumber",
-        "description": "pdfplumber is a PDF library based on the MuPDF open source project.",
-        "tags": ["OCR", "opensource"],
-    },
-    {
-        "name": "pypdf",
-        "description": "pypdf is a PDF library based on the MuPDF open source project.",
-        "tags": ["opensource", "tables"],
-    },
-    {
-        "name": "pdfminer",
-        "description": "pdfminer is a PDF library based on the MuPDF open source project.",
-        "tags": ["opensource"],
-    },
-]
+app.include_router(jobs.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": settings.app_name,
-        "version": "0.1.0",
-        "description": "PDF extraction backend supporting multiple extraction tools",
-        "docs": "/docs",
-        "available_tools": MODELS_LIST
-    }
+def root():
+    return {"name": settings.app_name, "version": app.version, "docs": "/docs", "parsers": "/api/v1/parsers"}
 
-@app.get("/models")
-async def get_models():
-    """Get available models."""
-    return MODELS_LIST
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+def health_check(request: Request):
+    try:
+        request.app.state.mongo_client.admin.command("ping")
+        request.app.state.redis_client.ping()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="MongoDB or Redis is unavailable.") from exc
+    if not service_is_ready(request.app.state.db):
+        raise HTTPException(status_code=503, detail="The dispatcher or worker is unavailable.")
+    return {"status": "healthy", "mongodb": "connected", "redis": "connected", "dispatcher": "healthy", "worker": "healthy"}

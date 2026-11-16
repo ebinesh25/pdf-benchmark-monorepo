@@ -6,9 +6,11 @@ Each extractor returns plain text with all extracted content.
 import io
 from pathlib import Path
 from typing import Any
+from importlib import import_module
 
-# PyMuPDF (fitz)
-import fitz
+# Import the package directly; the legacy `fitz` shim emits a warning on stdout,
+# which would corrupt the parser child's JSON protocol.
+import pymupdf as fitz
 
 # pdfplumber
 import pdfplumber
@@ -292,14 +294,9 @@ def get_extractor(tool: str):
     Raises:
         ValueError: If tool is not supported
     """
-    extractors = {
-        "pymupdf": PyMuPDFExtractor,
-        "pdfplumber": PDFPlumberExtractor,
-        "pypdf": PyPDFExtractor,
-        "pdfminer": PDFMinerExtractor,
-    }
+    from app.registry import PARSER_ADAPTERS
 
-    if tool not in extractors:
-        raise ValueError(f"Unsupported tool: {tool}. Available: {list(extractors.keys())}")
-
-    return extractors[tool]
+    if tool not in PARSER_ADAPTERS:
+        raise ValueError(f"Unsupported tool: {tool}. Available: {list(PARSER_ADAPTERS)}")
+    module_name, class_name = PARSER_ADAPTERS[tool]
+    return getattr(import_module(module_name), class_name)

@@ -1,26 +1,35 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Search, ArrowRight } from "lucide-react"
 import ToolCard from "@/components/ToolCard"
-import toolsData from "@/data/pdf-tools.json"
-import { isBackendSupportedTool } from "@/lib/backend-tools"
+import { loadParserCatalog, type ParserCatalogEntry } from "@/lib/catalog"
 
 export default function Home() {
   const router = useRouter()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedTools, setSelectedTools] = useState<string[]>([])
+  const [tools, setTools] = useState<ParserCatalogEntry[]>([])
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    loadParserCatalog(controller.signal).then(setTools).catch((error) => {
+      if (!controller.signal.aborted) setCatalogError(error instanceof Error ? error.message : "Could not load parser catalog.")
+    })
+    return () => controller.abort()
+  }, [])
 
   const filteredTools = useMemo(() => {
-    return toolsData.tools.filter(tool =>
+    return tools.filter(tool =>
       tool.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       tool.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
       tool.category.toLowerCase().includes(searchQuery.toLowerCase())
     )
-  }, [searchQuery])
+  }, [searchQuery, tools])
 
   const handleToolSelect = (toolId: string) => {
     setSelectedTools(prev => {
@@ -65,10 +74,6 @@ export default function Home() {
               />
             </div>
 
-            <p className="text-center text-sm text-muted-foreground" role="note">
-              Accuracy, speed, and price figures are static catalog estimates. Their source and test method were not recorded; use live extraction results when comparing supported tools.
-            </p>
-
           </div>
 
           {selectedTools.length > 0 && (
@@ -90,7 +95,7 @@ export default function Home() {
 
           {/* Results Count */}
           <div className="text-center text-sm text-muted-foreground">
-            Showing {filteredTools.length} of {toolsData.tools.length} tools
+            {catalogError ?? `Showing ${filteredTools.length} of ${tools.length} parsers`}
           </div>
 
           {/* Tools Grid */}
@@ -102,13 +107,12 @@ export default function Home() {
                 isSelected={selectedTools.includes(tool.id)}
                 onSelect={() => handleToolSelect(tool.id)}
                 selectionMode={true}
-                selectionDisabled={!isBackendSupportedTool(tool.id)}
               />
             ))}
           </div>
 
           {/* No Results */}
-          {filteredTools.length === 0 && (
+          {filteredTools.length === 0 && !catalogError && (
             <div className="py-12 text-center">
               <p className="text-muted-foreground">
                 No tools found matching your search.

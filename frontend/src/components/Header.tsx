@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { FileText, GitCompare } from "lucide-react"
+import { FileText, GitCompare, BarChart3 } from "lucide-react"
 
 export default function Header() {
   const pathname = usePathname()
@@ -36,6 +36,10 @@ export default function Header() {
           >
             <GitCompare className="h-4 w-4" />
             Compare
+          </Link>
+          <Link href="/benchmarks" className={`flex items-center gap-2 text-sm font-medium transition-colors hover:text-primary ${pathname.startsWith("/benchmarks") || pathname.startsWith("/reports") ? "text-foreground" : "text-muted-foreground"}`}>
+            <BarChart3 className="h-4 w-4" />
+            Benchmarks
           </Link>
         </nav>
       </div>
